@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RTL-SDR USB device filter.
+  VID 0x0BDA (3034) = Realtek Semiconductor – covers all RTL2832-based dongles.
+  PID is omitted to match any RTL2832 product ID.
+-->
+<resources>
+    <usb-device vendor-id="3034" />
+</resources>

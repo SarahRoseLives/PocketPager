@@ -1,0 +1,6 @@
+[submodule "pocketpager/android/rtl_tcp_andro"]
+	path = pocketpager/android/rtl_tcp_andro
+	url = https://github.com/signalwareltd/rtl_tcp_andro-.git
+[submodule "multimon-ng"]
+	path = multimon-ng
+	url = https://github.com/EliasOenal/multimon-ng.git

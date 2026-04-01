@@ -1,0 +1,18 @@
+# Build outputs
+pocketpager/build/
+pocketpager/.dart_tool/
+pocketpager/.flutter-plugins
+pocketpager/.flutter-plugins-dependencies
+
+# Android local files
+pocketpager/android/local.properties
+pocketpager/android/.gradle/
+pocketpager/android/app/.cxx/
+
+# Native host test binaries
+native/pocketpager_test
+native/*.o
+
+# Editor
+.idea/
+*.iml
