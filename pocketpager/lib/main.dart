@@ -1,51 +1,71 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'pager_ffi.dart';
+import 'services/address_book_service.dart';
+import 'services/settings_service.dart';
+import 'screens/messages_screen.dart';
+import 'screens/settings_screen.dart';
 
-void main() {
-  runApp(const PocketPagerApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final addressBook = AddressBookService();
+  final settings    = SettingsService();
+  await Future.wait([addressBook.load(), settings.load()]);
+  runApp(PocketPagerApp(addressBook: addressBook, settings: settings));
 }
 
 class PocketPagerApp extends StatelessWidget {
-  const PocketPagerApp({super.key});
+  final AddressBookService addressBook;
+  final SettingsService    settings;
+
+  const PocketPagerApp(
+      {super.key, required this.addressBook, required this.settings});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'PocketPager',
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-          brightness: Brightness.dark,
+  Widget build(BuildContext ctx) => MaterialApp(
+        title: 'PocketPager',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(useMaterial3: true).copyWith(
+          colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.teal, brightness: Brightness.dark),
         ),
-      ),
-      home: const HomePage(),
-    );
-  }
+        home: HomePage(addressBook: addressBook, settings: settings),
+      );
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final AddressBookService addressBook;
+  final SettingsService    settings;
+
+  const HomePage(
+      {super.key, required this.addressBook, required this.settings});
+
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  static const _usbChannel = MethodChannel('com.example.pocketpager/usb');
-  static const _defaultFreq = 439987500;
+  static const _usbChannel =
+      MethodChannel('com.example.pocketpager/usb');
 
-  final PagerDecoder _decoder = PagerDecoder();
+  final PagerDecoder       _decoder        = PagerDecoder();
   StreamSubscription<PagerMessage>? _sub;
+  final List<PagerMessage> _messages       = [];
+  final List<DateTime>     _msgTimestamps  = [];
 
-  final List<PagerMessage> _messages = [];
-  final ScrollController   _scroll   = ScrollController();
+  bool   _running    = false;
+  String _status     = 'No RTL-SDR connected';
+  int    _freqHz     = 439987500;
+  int    _tabIndex   = 0;
+  int    _newMsgCount = 0;
 
   List<Map<String, dynamic>> _devices = [];
-  bool   _running = false;
-  String _status  = 'No RTL-SDR connected';
-  int    _freqHz  = _defaultFreq;
+
+  int get _msgRate {
+    final cutoff = DateTime.now().subtract(const Duration(seconds: 60));
+    return _msgTimestamps.where((t) => t.isAfter(cutoff)).length;
+  }
 
   @override
   void initState() {
@@ -58,13 +78,27 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _sub?.cancel();
     _decoder.dispose();
-    _scroll.dispose();
     super.dispose();
+  }
+
+  void _onMessage(PagerMessage msg) {
+    setState(() {
+      _messages.insert(0, msg);
+      final now = DateTime.now();
+      _msgTimestamps.add(now);
+      final cutoff = now.subtract(const Duration(seconds: 60));
+      _msgTimestamps.removeWhere((t) => t.isBefore(cutoff));
+      while (_messages.length > widget.settings.maxMessages) {
+        _messages.removeLast();
+      }
+      if (_tabIndex != 0) _newMsgCount++;
+    });
   }
 
   Future<void> _refreshDevices() async {
     try {
-      final raw = await _usbChannel.invokeMethod<List<dynamic>>('listDevices');
+      final raw =
+          await _usbChannel.invokeMethod<List<dynamic>>('listDevices');
       setState(() {
         _devices = (raw ?? [])
             .whereType<Map>()
@@ -80,24 +114,28 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openAndStart(Map<String, dynamic> device) async {
     try {
       final name = device['name']?.toString() ?? '';
-      debugPrint('PocketPager: _openAndStart device=$device name="$name"');
-      if (name.isEmpty) { setState(() => _status = 'Error: device has no path'); return; }
-
-      debugPrint('PocketPager: calling openDevice with name="$name"');
+      if (name.isEmpty) {
+        setState(() => _status = 'Error: device has no path');
+        return;
+      }
       final raw = await _usbChannel.invokeMapMethod<String, dynamic>(
           'openDevice', {'name': name});
-      debugPrint('PocketPager: openDevice returned raw=$raw');
       if (raw == null) return;
-
-      final rc = _decoder.open(raw['fd'] as int, raw['path'] as String, _freqHz);
-      if (rc != 0) { setState(() => _status = 'pager_open failed ($rc)'); return; }
-
+      final rc = _decoder.open(
+          raw['fd'] as int, raw['path'] as String, _freqHz);
+      if (rc != 0) {
+        setState(() => _status = 'pager_open failed ($rc)');
+        return;
+      }
       final rc2 = _decoder.start();
-      if (rc2 != 0) { setState(() => _status = 'pager_start failed ($rc2)'); return; }
-
+      if (rc2 != 0) {
+        setState(() => _status = 'pager_start failed ($rc2)');
+        return;
+      }
       setState(() {
         _running = true;
-        _status  = 'Decoding on ${(_freqHz / 1e6).toStringAsFixed(4)} MHz';
+        _status =
+            'Decoding ${(_freqHz / 1e6).toStringAsFixed(4)} MHz';
       });
     } on PlatformException catch (e) {
       setState(() => _status = 'Error: ${e.message}');
@@ -106,167 +144,237 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _stop() async {
     _decoder.stop();
-    await _usbChannel.invokeMethod('closeDevice');
-    setState(() { _running = false; _status = 'Stopped'; });
-  }
-
-  void _onMessage(PagerMessage msg) {
+    await _usbChannel.invokeMethod<void>('closeDevice');
     setState(() {
-      _messages.insert(0, msg);
-      if (_messages.length > 500) _messages.removeLast();
+      _running = false;
+      _status  = 'Stopped';
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('PocketPager'),
-        actions: [
-          if (!_running)
-            IconButton(icon: const Icon(Icons.refresh),
-                tooltip: 'Scan', onPressed: _refreshDevices),
-          if (_running)
-            IconButton(icon: const Icon(Icons.stop_circle, color: Colors.redAccent),
-                tooltip: 'Stop', onPressed: _stop),
-          IconButton(icon: const Icon(Icons.delete_sweep),
-              tooltip: 'Clear', onPressed: () => setState(() => _messages.clear())),
-        ],
-      ),
-      body: Column(children: [
-        _StatusBar(status: _status),
-        if (!_running)
-          _DevicePanel(
-            devices: _devices,
-            freqHz: _freqHz,
-            onFreqChanged: (f) => setState(() => _freqHz = f),
-            onConnect: _openAndStart,
-          ),
-        const Divider(height: 1),
-        Expanded(
-          child: _messages.isEmpty
-              ? const Center(child: Text('No messages yet',
-                  style: TextStyle(color: Colors.grey)))
-              : ListView.builder(
-                  controller: _scroll,
-                  itemCount: _messages.length,
-                  itemBuilder: (ctx, i) => _MessageTile(msg: _messages[i]),
+  Widget _buildConnectionPanel() {
+    final freqCtrl = TextEditingController(
+        text: (_freqHz / 1e6).toStringAsFixed(4));
+    return Container(
+      color: Theme.of(context).colorScheme.surface,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true),
+                  controller: freqCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Frequency (MHz)',
+                    border: const OutlineInputBorder(),
+                    suffixText: 'MHz',
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.star_outline, size: 18),
+                      tooltip: 'Presets',
+                      onPressed: _showPresetPicker,
+                    ),
+                  ),
+                  onSubmitted: (v) {
+                    final mhz = double.tryParse(v);
+                    if (mhz != null) {
+                      setState(() => _freqHz = (mhz * 1e6).round());
+                    }
+                  },
                 ),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            if (_devices.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(children: [
+                  Icon(Icons.usb_off,
+                      color: Colors.grey.shade600, size: 20),
+                  const SizedBox(width: 8),
+                  Text('No RTL-SDR detected — plug in via OTG',
+                      style: TextStyle(
+                          color: Colors.grey.shade600, fontSize: 13)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _refreshDevices,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Scan'),
+                  ),
+                ]),
+              )
+            else
+              ..._devices.map((d) => Card(
+                    margin: const EdgeInsets.only(bottom: 4),
+                    child: ListTile(
+                      dense: true,
+                      leading:
+                          const Icon(Icons.usb, color: Colors.teal),
+                      title: Text(d['name'] as String,
+                          style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                          'VID:0x${(d['vid'] as int).toRadixString(16).toUpperCase()}  '
+                          'PID:0x${(d['pid'] as int).toRadixString(16).toUpperCase()}',
+                          style: const TextStyle(fontSize: 11)),
+                      trailing: FilledButton(
+                        onPressed: () => _openAndStart(d),
+                        child: const Text('Connect'),
+                      ),
+                    ),
+                  )),
+          ]),
+    );
+  }
+
+  void _showPresetPicker() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Frequency Presets',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 16)),
         ),
+        ...widget.settings.presets.map((p) => ListTile(
+              leading: const Icon(Icons.radio, color: Colors.teal),
+              title: Text(p.label),
+              subtitle:
+                  Text('${(p.freqHz / 1e6).toStringAsFixed(4)} MHz'),
+              trailing: p.freqHz == _freqHz
+                  ? const Icon(Icons.check, color: Colors.teal)
+                  : null,
+              onTap: () {
+                setState(() => _freqHz = p.freqHz);
+                Navigator.pop(context);
+              },
+            )),
+        if (widget.settings.presets.isEmpty)
+          const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No presets — add some in Settings',
+                  style: TextStyle(color: Colors.grey))),
+        const SizedBox(height: 16),
       ]),
     );
   }
-}
 
-class _StatusBar extends StatelessWidget {
-  final String status;
-  const _StatusBar({required this.status});
-  @override
-  Widget build(BuildContext context) => Container(
-    color: Colors.teal.shade900,
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-    child: Row(children: [
-      const Icon(Icons.settings_input_antenna, size: 16),
-      const SizedBox(width: 8),
-      Expanded(child: Text(status, style: const TextStyle(fontSize: 13))),
-    ]),
-  );
-}
-
-class _DevicePanel extends StatelessWidget {
-  final List<Map<String, dynamic>> devices;
-  final int    freqHz;
-  final void Function(int) onFreqChanged;
-  final void Function(Map<String, dynamic>) onConnect;
-  const _DevicePanel({required this.devices, required this.freqHz,
-      required this.onFreqChanged, required this.onConnect});
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(12),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      TextField(
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        controller: TextEditingController(
-            text: (freqHz / 1e6).toStringAsFixed(4)),
-        decoration: const InputDecoration(
-            labelText: 'Frequency (MHz)', border: OutlineInputBorder(),
-            suffixText: 'MHz', isDense: true),
-        onSubmitted: (v) {
-          final mhz = double.tryParse(v);
-          if (mhz != null) onFreqChanged((mhz * 1e6).round());
-        },
-      ),
-      const SizedBox(height: 8),
-      if (devices.isEmpty)
-        const Text('No RTL-SDR found. Plug in via OTG.',
-            style: TextStyle(color: Colors.grey))
-      else
-        ...devices.map((d) => Card(child: ListTile(
-          leading: const Icon(Icons.usb),
-          title: Text(d['name'] as String),
-          subtitle: Text(
-              'VID:0x${(d['vid'] as int).toRadixString(16).toUpperCase()}  '
-              'PID:0x${(d['pid'] as int).toRadixString(16).toUpperCase()}'),
-          trailing: ElevatedButton(
-              onPressed: () => onConnect(d), child: const Text('Connect')),
-        ))),
-    ]),
-  );
-}
-
-class _MessageTile extends StatelessWidget {
-  final PagerMessage msg;
-  const _MessageTile({required this.msg});
-  static final _fmt = DateFormat('HH:mm:ss');
-
-  Color _color(String p) => switch (p) {
-    'POCSAG512'  => Colors.orange,
-    'POCSAG1200' => Colors.teal,
-    'POCSAG2400' => Colors.cyan,
-    'FLEX'       => Colors.purple,
-    'FLEX_NEXT'  => Colors.deepPurple,
-    _            => Colors.grey,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final local = msg.timestamp.toLocal();
-    final c = _color(msg.protocol);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+  Widget _buildStatusBar() {
+    return Container(
+                  color: Colors.teal.shade900.withValues(alpha: 0.8),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(children: [
+        Container(
+            width: 8,
+            height: 8,
             decoration: BoxDecoration(
-              color: c.withOpacity(0.15),
-              border: Border.all(color: c),
-              borderRadius: BorderRadius.circular(4),
+                color: _running ? Colors.greenAccent : Colors.grey,
+                shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Text(
+            _running
+                ? '${(_freqHz / 1e6).toStringAsFixed(4)} MHz'
+                : _status,
+            style: const TextStyle(fontSize: 13)),
+        const Spacer(),
+        if (_running) ...[
+          Text('$_msgRate /min',
+              style: const TextStyle(
+                  fontSize: 11, color: Colors.grey)),
+          const SizedBox(width: 12),
+          Text('${_messages.length} msgs',
+              style: const TextStyle(
+                  fontSize: 11, color: Colors.grey)),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _stop,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.2),
+                  border:
+                      Border.all(color: Colors.red.shade400),
+                  borderRadius: BorderRadius.circular(12)),
+              child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.stop,
+                        size: 12, color: Colors.redAccent),
+                    SizedBox(width: 4),
+                    Text('Stop',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.redAccent)),
+                  ]),
             ),
-            child: Text(msg.protocol,
-                style: TextStyle(fontSize: 10, color: c, fontWeight: FontWeight.bold)),
           ),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Text('${msg.address}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(width: 8),
-              Text('Fn:${msg.function}',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
-              const Spacer(),
-              Text(_fmt.format(local),
-                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            ]),
-            if (msg.message.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(msg.message, style: const TextStyle(fontSize: 13)),
+        ],
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext ctx) {
+    return Scaffold(
+      body: SafeArea(
+        child: IndexedStack(
+        index: _tabIndex,
+        children: [
+          // ── Messages tab ──────────────────────────────────────────
+          Column(children: [
+            _buildStatusBar(),
+            if (!_running) _buildConnectionPanel(),
+            const Divider(height: 1),
+            Expanded(
+              child: ListenableBuilder(
+                listenable: widget.addressBook,
+                builder: (ctx, _) => MessagesScreen(
+                  messages: List.unmodifiable(_messages),
+                  addressBook: widget.addressBook,
+                  onClear: () => setState(() {
+                    _messages.clear();
+                    _msgTimestamps.clear();
+                    _newMsgCount = 0;
+                  }),
+                ),
               ),
-          ])),
-        ]),
+            ),
+          ]),
+          // ── Settings tab ──────────────────────────────────────────
+          SettingsScreen(
+            settings: widget.settings,
+            currentFreqHz: _freqHz,
+            onFreqSelected: (f) => setState(() => _freqHz = f),
+          ),
+        ],
+      ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (i) => setState(() {
+          _tabIndex = i;
+          if (i == 0) _newMsgCount = 0;
+        }),
+        destinations: [
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: _newMsgCount > 0,
+              label: Text(_newMsgCount > 99 ? '99+' : '$_newMsgCount'),
+              child: const Icon(Icons.message_outlined),
+            ),
+            selectedIcon: const Icon(Icons.message),
+            label: 'Messages',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
       ),
     );
   }
