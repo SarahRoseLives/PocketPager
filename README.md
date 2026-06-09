@@ -55,6 +55,10 @@ flutter run -d <device-id>
 
 The NDK build compiles `librtlsdr` (Android USB OTG), `libusb` (Android), and all multimon-ng decoder sources into a single `libpocketpager.so`.
 
+## Downloads
+
+Pre-built signed APKs are available at [sarahsforge.dev/products/pocketpager](https://sarahsforge.dev/products/pocketpager).
+
 ## Usage
 
 1. Plug the RTL-SDR into your phone via OTG cable — PocketPager auto-launches
