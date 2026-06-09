@@ -1,4 +1,4 @@
-package com.example.pocketpager
+package dev.sarahsforge.pocketpager
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -17,7 +17,7 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * MainActivity – bridges Flutter ↔ Android USB Host API for RTL-SDR OTG.
  *
- * MethodChannel: "com.example.pocketpager/usb"
+ * MethodChannel: "dev.sarahsforge.pocketpager/usb"
  *
  *   listDevices()  → List<Map<String, Any>>
  *       [ { "name": "/dev/bus/usb/001/002", "vid": 3034, "pid": 10296 } ]
@@ -30,8 +30,8 @@ import io.flutter.plugin.common.MethodChannel
  */
 class MainActivity : FlutterActivity() {
 
-    private val CHANNEL = "com.example.pocketpager/usb"
-    private val ACTION_USB_PERMISSION = "com.example.pocketpager.USB_PERMISSION"
+    private val CHANNEL = "dev.sarahsforge.pocketpager/usb"
+    private val ACTION_USB_PERMISSION = "dev.sarahsforge.pocketpager.USB_PERMISSION"
     private val RTLSDR_VID = 0x0BDA
 
     private var usbManager: UsbManager? = null

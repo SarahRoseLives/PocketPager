@@ -47,7 +47,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   static const _usbChannel =
-      MethodChannel('com.example.pocketpager/usb');
+      MethodChannel('dev.sarahsforge.pocketpager/usb');
 
   final PagerDecoder       _decoder        = PagerDecoder();
   StreamSubscription<PagerMessage>? _sub;

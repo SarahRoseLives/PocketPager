@@ -16,3 +16,7 @@ native/*.o
 # Editor
 .idea/
 *.iml
+
+# Keystore
+*.jks
+*.keystore

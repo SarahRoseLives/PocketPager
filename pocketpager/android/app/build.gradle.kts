@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.pocketpager"
+    namespace = "dev.sarahsforge.pocketpager"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "27.0.12077973"    // pinned: matches rtl_tcp_andro requirements
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.pocketpager"
+        applicationId = "dev.sarahsforge.pocketpager"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -44,9 +44,20 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("pocketpager.jks")
+            storePassword = "pocketpager123"
+            keyAlias = "pocketpager"
+            keyPassword = "pocketpager123"
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
