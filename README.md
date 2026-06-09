@@ -2,6 +2,10 @@
 
 A Flutter Android app that decodes pager signals (POCSAG 512/1200/2400 and FLEX) in real-time using an RTL-SDR dongle connected via USB OTG.
 
+## Download
+
+Pre-built signed APKs: [sarahsforge.dev/products/pocketpager](https://sarahsforge.dev/products/pocketpager)
+
 ## Signal Pipeline
 
 ```
@@ -54,10 +58,6 @@ flutter run -d <device-id>
 ```
 
 The NDK build compiles `librtlsdr` (Android USB OTG), `libusb` (Android), and all multimon-ng decoder sources into a single `libpocketpager.so`.
-
-## Downloads
-
-Pre-built signed APKs are available at [sarahsforge.dev/products/pocketpager](https://sarahsforge.dev/products/pocketpager).
 
 ## Usage
 
